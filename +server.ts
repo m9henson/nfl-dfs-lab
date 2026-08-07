@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import vike from 'vike/fetch'
+import vike from '@vikejs/hono'
 import type { Server } from 'vike/types'
 import OpenAI from 'openai'
 import * as cheerio from 'cheerio'
@@ -322,24 +322,21 @@ app.get('/diagnostic', (c) =>
   </html>`)
 )
 
+
+app.get('/client-check', (c) =>
+  c.html(`<!doctype html>
+  <html>
+    <head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Client Check</title></head>
+    <body style="font-family:system-ui;padding:24px;background:#06111f;color:white">
+      <h1>Browser JavaScript check</h1>
+      <div id="status">JavaScript has not run yet.</div>
+      <script>document.getElementById('status').textContent='JavaScript is running in Safari ✅'</script>
+    </body>
+  </html>`)
+)
+
 // Vike catch-all must be last.
-// We deliberately call Vike's standard Fetch API directly instead of using
-// a framework adapter. This makes production behavior easier to diagnose.
-app.all('*', async (c) => {
-  const url = new URL(c.req.url)
-  console.log(`[page] ${c.req.method} ${url.pathname}`)
-  try {
-    const response = await vike.fetch(c.req.raw)
-    console.log(`[page] ${url.pathname} -> ${response.status}`)
-    return response
-  } catch (error) {
-    console.error(`[page] Unhandled Vike error for ${url.pathname}:`, error)
-    return c.text(
-      `NFL DFS Lab page error: ${error instanceof Error ? error.message : String(error)}`,
-      500
-    )
-  }
-})
+vike(app)
 
 export default {
   fetch: app.fetch,
