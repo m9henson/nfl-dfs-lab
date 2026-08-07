@@ -1,0 +1,22 @@
+NFL DFS LAB - SSR FIX
+
+Why:
+- /diagnostic works
+- /api/health works
+- /client-check proves Safari JavaScript works
+- / was blank with ssr:false
+
+This build turns Vike SSR back ON.
+The NFL dashboard is safe to server-render because browser-only APIs are only used inside click/file handlers.
+
+Expected behavior:
+1. Render returns complete NFL DFS HTML immediately.
+2. React hydrates it in Safari.
+3. API calls continue through the same Hono server.
+
+Service worker remains disabled until the site is stable.
+
+Test after deploy:
+- /diagnostic
+- /api/health
+- /
