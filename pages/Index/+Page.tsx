@@ -33,7 +33,7 @@ function scorePlayer(p:DfsPlayer):DfsPlayer{
  return {...p,opportunityScore:opportunity,matchupScore:matchup,vegasScore:vegas,valueScore:value,ceilingScore:ceiling,leverageScore:leverage,dfsScore:dfs}
 }
 
-export default function Page(){
+export function Page(){
  const [slates,setSlates]=useState<Slate[]>([])
  const [slateId,setSlateId]=useState('')
  const [players,setPlayers]=useState<DfsPlayer[]>([])
