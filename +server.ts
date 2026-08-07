@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import vike from '@vikejs/hono'
+import vike from 'vike/fetch'
 import type { Server } from 'vike/types'
 import OpenAI from 'openai'
 import * as cheerio from 'cheerio'
@@ -310,9 +310,40 @@ app.get('/api/nfl/weekly-stats', async (c) => {
 })
 
 
+
+app.get('/diagnostic', (c) =>
+  c.html(`<!doctype html>
+  <html>
+    <head><meta name="viewport" content="width=device-width,initial-scale=1"><title>NFL DFS Diagnostic</title></head>
+    <body style="font-family:system-ui;padding:24px;background:#06111f;color:white">
+      <h1>NFL DFS server is working</h1>
+      <p>Hono API routing is healthy. If the home page fails, the problem is isolated to Vike/client rendering.</p>
+    </body>
+  </html>`)
+)
+
 // Vike catch-all must be last.
-vike(app)
+// We deliberately call Vike's standard Fetch API directly instead of using
+// a framework adapter. This makes production behavior easier to diagnose.
+app.all('*', async (c) => {
+  const url = new URL(c.req.url)
+  console.log(`[page] ${c.req.method} ${url.pathname}`)
+  try {
+    const response = await vike.fetch(c.req.raw)
+    console.log(`[page] ${url.pathname} -> ${response.status}`)
+    return response
+  } catch (error) {
+    console.error(`[page] Unhandled Vike error for ${url.pathname}:`, error)
+    return c.text(
+      `NFL DFS Lab page error: ${error instanceof Error ? error.message : String(error)}`,
+      500
+    )
+  }
+})
 
 export default {
-  fetch: app.fetch
+  fetch: app.fetch,
+  prod: {
+    static: true
+  }
 } satisfies Server

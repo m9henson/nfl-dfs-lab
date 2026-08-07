@@ -10,7 +10,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@vikejs/hono": "0.2.1",
     "hono": "4.12.32",
     "openai": "6.49.0",
     "react": "19.2.8",
