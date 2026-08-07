@@ -1,0 +1,32 @@
+{
+  "name": "nfl-dfs-lab",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vike dev --host",
+    "build": "vike build",
+    "start": "node dist/server/index.mjs",
+    "preview": "vike preview --host",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@vikejs/hono": "0.2.1",
+    "hono": "4.12.32",
+    "openai": "6.49.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "vike": "0.4.260",
+    "vike-react": "latest",
+    "cheerio": "1.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "typescript": "5.8.3",
+    "vite": "latest"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
