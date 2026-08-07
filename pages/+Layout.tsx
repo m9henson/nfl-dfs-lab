@@ -1,12 +1,7 @@
-import React, { type ReactNode, useEffect } from 'react'
+import React, { type ReactNode } from 'react'
 import '../src/styles.css'
 
 export function Layout({ children }: { children: ReactNode }) {
-  useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => undefined)
-    }
-  }, [])
 
   return (
     <>
