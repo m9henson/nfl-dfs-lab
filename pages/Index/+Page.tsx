@@ -3,6 +3,7 @@ import { NFL } from '../../src/sports'
 import { optimize } from '../../src/optimizer'
 import { exportDraftKingsLineups,importDraftKingsCsv } from '../../src/csv'
 import type { DfsPlayer,Lineup,Slate } from '../../src/types'
+import '../../src/styles.css'
 
 const fmt=new Intl.NumberFormat('en-US')
 const money=(n:number)=>`$${fmt.format(n)}`
