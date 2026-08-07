@@ -1,0 +1,18 @@
+NFL DFS Lab static asset fix
+
+Problem confirmed:
+- SSR HTML reaches Safari.
+- CSS/client assets do not.
+- Result is an unstyled HTML page.
+
+Fix:
+- Explicit Hono static serving for /assets/* from ./dist/client.
+- @hono/node-server dependency included.
+- Docker build copies the complete Vike dist output.
+- Vike catch-all remains last.
+
+After deployment:
+1. Wait until Render reports the new deploy is Live.
+2. Open the homepage in a Private Safari tab.
+3. If still unstyled, open /assets/ only isn't a useful test because filenames are hashed.
+   Instead send a screenshot of the newest Render deploy/build log.

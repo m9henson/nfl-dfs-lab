@@ -1,0 +1,18 @@
+NFL DFS LAB - FINAL Hono/Vike deployment
+
+This build:
+- Uses official @vikejs/hono adapter.
+- Keeps ssr: false.
+- Uses named Page and Layout exports.
+- Explicitly maps / to pages/index/+Page.tsx.
+- Removes service worker/offline cache for now.
+- Keeps /diagnostic and /api/health.
+- Adds /client-check.
+
+After deploy, test:
+1. /diagnostic
+2. /client-check
+3. /api/health
+4. /
+
+If 1-3 work and / fails, Render logs should now show the Vike adapter error.

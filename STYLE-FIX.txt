@@ -1,0 +1,13 @@
+NFL DFS LAB - STYLE FIX
+
+The app rendered correctly but CSS was not applied.
+
+This package:
+- Imports ../../src/styles.css directly from pages/index/+Page.tsx
+- Removes the duplicate Layout CSS import
+- Keeps SSR enabled
+- Keeps the official Hono/Vike setup
+- Adds an explicit mobile viewport
+
+After Render redeploys, open / in a Private Safari tab first.
+Expected result: dark mobile NFL DFS dashboard with cards/tabs rather than plain black text on white.
