@@ -282,7 +282,7 @@ app.get('/api/nfl/weekly-stats', async (c) => {
   if (hit) return c.json(hit)
 
   try {
-    const url = `https://github.com/nflverse/nflverse-data/releases/download/player_stats/stats_player_week_${season}.csv`
+    const url = `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_${season}.csv`
     const res = await fetch(url, { headers: { 'user-agent': 'NFLDFSLab/1.0' } })
     if (!res.ok) throw new Error(`nflverse returned ${res.status}`)
     const text = await res.text()
