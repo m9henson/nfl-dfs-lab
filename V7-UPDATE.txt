@@ -1,0 +1,9 @@
+NFL DFS LAB v7
+
+1. Fixed nflverse Week 1 404 behavior by automatically using prior-season regular-season history.
+2. History window expanded to 8 weeks.
+3. Added Defense vs Position (DVP) calculation for QB/RB/WR/TE.
+4. Added Recent Form from the last 3 games vs the historical window.
+5. Added Player Rating using Projection + Usage + DVP + Vegas + Recent Form + Value + Ceiling + WR/CB matchup.
+6. Added WR/CB matchup as a clearly labeled team-coverage proxy until individual corner/shadow data is connected.
+7. Dashboard cards now show all rating components.

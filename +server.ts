@@ -272,51 +272,62 @@ app.get('/api/values/football', async (c) => {
 app.get('/api/nfl/weekly-stats', async (c) => {
   const season = Number(c.req.query('season') || new Date().getFullYear())
   const targetWeek = Number(c.req.query('week') || 1)
-  const history = Math.max(1, Math.min(8, Number(c.req.query('history') || 5)))
-  if (!Number.isInteger(season) || !Number.isInteger(targetWeek)) {
-    return c.json({ error: 'Invalid season/week' }, 400)
-  }
+  const history = Math.max(3, Math.min(10, Number(c.req.query('history') || 8)))
+  if (!Number.isInteger(season) || !Number.isInteger(targetWeek)) return c.json({ error: 'Invalid season/week' }, 400)
 
-  const key = `nflverse:${season}:${targetWeek}:${history}`
+  const key = `nflverse:${season}:${targetWeek}:${history}:fallback-v2`
   const hit = cached<any>(key)
   if (hit) return c.json(hit)
 
   try {
-    const url = `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_${season}.csv`
-    const res = await fetch(url, { headers: { 'user-agent': 'NFLDFSLab/1.0' } })
-    if (!res.ok) throw new Error(`nflverse returned ${res.status}`)
-    const text = await res.text()
-    const lines = text.replace(/\r/g,'').split('\n').filter(Boolean)
-    const headers = lines[0].split(',')
-    const ix = (names:string[]) => names.map(n=>headers.indexOf(n)).find(i=>i>=0) ?? -1
-    const col = {
-      week: ix(['week']), name: ix(['player_display_name','player_name']),
-      pos: ix(['position','position_group']), team: ix(['recent_team','team']),
-      opp: ix(['opponent_team','opponent']), targets: ix(['targets']),
-      carries: ix(['carries','rushing_attempts']), receptions: ix(['receptions']),
-      fantasy: ix(['fantasy_points_ppr','fantasy_points']),
-      targetShare: ix(['target_share','tgt_sh']), airShare: ix(['air_yards_share','ay_sh']),
-      wopr: ix(['wopr'])
+    // In August/early season the requested season's weekly-stat asset may not exist yet.
+    // Try the selected season first, then automatically fall back to the prior season
+    // so Week 1 still has useful historical usage, recent-form and DVP data.
+    let dataSeason=season, text='', sourceUrl=''
+    const attempts:number[]=[]
+    const candidateYears=targetWeek===1?[season-1,season-2]:[season,season-1,season-2]
+    for(const y of candidateYears){
+      attempts.push(y)
+      const url=`https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_${y}.csv`
+      const res=await fetch(url,{headers:{'accept':'text/csv,*/*','user-agent':'NFLDFSLab/1.1'}})
+      if(res.ok){dataSeason=y;text=await res.text();sourceUrl=url;break}
+      if(res.status!==404) throw new Error(`nflverse returned ${res.status} for ${y}`)
     }
-    const minWeek=Math.max(1,targetWeek-history)
-    const rows=lines.slice(1).map(line=>line.split(',')).filter(r=>{
-      const w=Number(r[col.week]);return w>=minWeek&&w<targetWeek
-    }).map(r=>({
-      week:Number(r[col.week]),name:r[col.name]||'',position:r[col.pos]||'',
-      team:r[col.team]||'',opponent:r[col.opp]||'',
-      targets:Number(r[col.targets]||0),carries:Number(r[col.carries]||0),
-      receptions:Number(r[col.receptions]||0),fantasyPoints:Number(r[col.fantasy]||0),
-      targetShare:Number(r[col.targetShare]||0),airYardsShare:Number(r[col.airShare]||0),
-      wopr:Number(r[col.wopr]||0)
-    }))
-    const payload={source:'nflverse player weekly stats',season,targetWeek,history,rows}
+    if(!text) throw new Error(`No nflverse weekly player CSV found for ${attempts.join(', ')}`)
+
+    const lines=text.replace(/\r/g,'').split('\n').filter(Boolean)
+    const headers=lines[0].split(',').map(x=>x.replace(/^"|"$/g,''))
+    const ix=(names:string[])=>names.map(n=>headers.indexOf(n)).find(i=>i>=0)??-1
+    const col={
+      week:ix(['week']),name:ix(['player_display_name','player_name']),pos:ix(['position','position_group']),
+      team:ix(['recent_team','team']),opp:ix(['opponent_team','opponent']),targets:ix(['targets']),
+      carries:ix(['carries','rushing_attempts']),receptions:ix(['receptions']),fantasy:ix(['fantasy_points_ppr','fantasy_points']),
+      targetShare:ix(['target_share','tgt_sh']),airShare:ix(['air_yards_share','ay_sh']),wopr:ix(['wopr']),seasonType:ix(['season_type'])
+    }
+    if(col.week<0||col.name<0||col.pos<0||col.fantasy<0) throw new Error('nflverse CSV schema did not contain required weekly-player columns')
+    const parsed=lines.slice(1).map(line=>line.split(',').map(x=>x.replace(/^"|"$/g,''))).map(r=>({
+      week:Number(r[col.week]),name:r[col.name]||'',position:r[col.pos]||'',team:col.team>=0?r[col.team]||'':'',opponent:col.opp>=0?r[col.opp]||'':'',seasonType:col.seasonType>=0?r[col.seasonType]||'':'',
+      targets:col.targets>=0?Number(r[col.targets]||0):0,carries:col.carries>=0?Number(r[col.carries]||0):0,receptions:col.receptions>=0?Number(r[col.receptions]||0):0,
+      fantasyPoints:Number(r[col.fantasy]||0),targetShare:col.targetShare>=0?Number(r[col.targetShare]||0):0,airYardsShare:col.airShare>=0?Number(r[col.airShare]||0):0,wopr:col.wopr>=0?Number(r[col.wopr]||0):0
+    })).filter(r=>Number.isFinite(r.week)&&r.name)
+    // Player-summary files can contain postseason rows. Keep REG rows when that column exists.
+    const regular=col.seasonType>=0?parsed.filter((r:any)=>!r.seasonType||r.seasonType==='REG'):parsed
+
+    let rows:any[]
+    if(dataSeason===season && targetWeek>1){
+      const minWeek=Math.max(1,targetWeek-history)
+      rows=regular.filter(r=>r.week>=minWeek&&r.week<targetWeek)
+    }else{
+      const weeks=[...new Set(regular.map(r=>r.week))].sort((a,b)=>b-a).slice(0,history)
+      const keep=new Set(weeks);rows=regular.filter(r=>keep.has(r.week))
+    }
+    const payload={source:'nflverse player weekly stats',sourceUrl,season,dataSeason,targetWeek,history,rows,fallback:dataSeason!==season}
     store(key,payload,30*60_000)
     return c.json(payload)
-  } catch(error) {
+  }catch(error){
     return c.json({error:'nflverse weekly stats failed',detail:error instanceof Error?error.message:String(error)},502)
   }
 })
-
 
 
 app.get('/diagnostic', (c) =>

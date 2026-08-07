@@ -59,3 +59,10 @@ npm run dev
 ## Deploy
 
 This needs a Node server; GitHub Pages alone is not sufficient. `render.yaml` and `Dockerfile` are included.
+
+## v7 matchup rating update
+- Dashboard remains Top 3 by QB/RB/WR/TE/DST.
+- Player Rating now combines Projection (22%), Usage (18%), DVP (14%), Vegas (10%), Recent Form (12%), Value (10%), Ceiling (10%), and WR/CB matchup proxy (4%).
+- nflverse Week 1 automatically uses the prior regular season's last 8 weeks instead of requesting a not-yet-published current-season file.
+- DVP is calculated from fantasy points allowed by opponent and position across the loaded historical window. Rank #1 means the defense allowed the most fantasy production to that position (easiest matchup).
+- WR/CB currently uses team WR coverage/DVP as a proxy; it is labeled as a proxy until a reliable individual shadow-coverage feed is connected.
