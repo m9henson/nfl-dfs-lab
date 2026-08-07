@@ -30,6 +30,13 @@ export type DfsPlayer = {
   gameTotal?: number
   spread?: number
   defenseVsPositionRank?: number
+  defenseVsPositionPoints?: number
+  recentFantasyAvg?: number
+  historyFantasyAvg?: number
+  projectionScore?: number
+  recentFormScore?: number
+  wrCbMatchupScore?: number
+  playerRating?: number
 
   opportunityScore?: number
   matchupScore?: number
