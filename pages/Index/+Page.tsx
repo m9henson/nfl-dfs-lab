@@ -48,7 +48,10 @@ export function Page(){
  const [settings,setSettings]=useState({lineupCount:20,salaryCap:50000,minSpend:48000,maxExposure:.7,minUnique:2,randomness:.08,attempts:30000,requireStack:true,requireBringBack:false,maxTeamPlayers:4})
 
  const scored=useMemo(()=>players.map(scorePlayer).sort((a,b)=>(b.dfsScore||0)-(a.dfsScore||0)),[players])
- const top=useMemo(()=>scored.slice(0,12),[scored])
+ const topByPosition=useMemo(()=>{
+  const positions=['QB','RB','WR','TE','DST']
+  return positions.map(position=>({position,players:scored.filter(p=>p.position.toUpperCase()===position).slice(0,3)}))
+ },[scored])
 
  async function fetchSlates(){
   setLoading('slates');setError('')
@@ -94,7 +97,7 @@ export function Page(){
       ceiling:Math.max(...rows.map(x=>x.fantasyPoints),p.ceiling)
     })
    }))
-   setDataStatus(s=>[...s.filter(x=>!x.startsWith('nflverse')),'nflverse usage/history loaded'])
+   setDataStatus(s=>[...s.filter(x=>!x.startsWith('nflverse')),`nflverse usage/history loaded · ${d.rows?.length||0} historical rows`])
   }catch(e){setError(String(e))}finally{setLoading('')}
  }
  async function loadWWO(){
@@ -144,11 +147,14 @@ export function Page(){
     </div>
    </section>
    <section className="card">
-    <div className="cardTitle"><div><span className="step">3</span><strong>Top NFL DFS plays</strong></div><span className="badge">{players.length} players</span></div>
-    <div className="scoreGrid">{top.map((p,i)=><article className="scoreCard" key={p.name}>
-     <div className="rank">{i+1}</div><div><strong>{p.name}</strong><div className="muted tiny">{p.position} · {p.team} · {money(p.salary)}</div></div><div className="bigScore">{p.dfsScore?.toFixed(0)}</div>
-     <div className="breakdown"><span>Opp {p.opportunityScore?.toFixed(0)}</span><span>Match {p.matchupScore?.toFixed(0)}</span><span>Value {p.valueScore?.toFixed(0)}</span><span>Ceil {p.ceilingScore?.toFixed(0)}</span></div>
-    </article>)}</div>
+    <div className="cardTitle"><div><span className="step">3</span><strong>Top 3 by position</strong></div><span className="badge">{players.length} players</span></div>
+    {topByPosition.map(group=><div className="positionGroup" key={group.position}>
+     <div className="positionHeading"><strong>{group.position}</strong><span className="muted tiny">Top DraftKings plays</span></div>
+     <div className="scoreGrid">{group.players.map((p,i)=><article className="scoreCard" key={`${group.position}-${p.name}`}>
+      <div className="rank">{i+1}</div><div><strong>{p.name}</strong><div className="muted tiny">{p.position} · {p.team} · {money(p.salary)}</div></div><div className="bigScore">{p.dfsScore?.toFixed(0)}</div>
+      <div className="breakdown"><span>Opp {p.opportunityScore?.toFixed(0)}</span><span>Match {p.matchupScore?.toFixed(0)}</span><span>Value {p.valueScore?.toFixed(0)}</span><span>Ceil {p.ceilingScore?.toFixed(0)}</span></div>
+     </article>)}</div>
+    </div>)}
    </section>
   </>}
 
