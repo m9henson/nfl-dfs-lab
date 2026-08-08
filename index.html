@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b3428"><meta name="color-scheme" content="light dark"><title>Ozark Travel Stein League</title>
+<link rel="manifest" href="manifest.webmanifest?v=173"><link rel="apple-touch-icon" href="apple-touch-icon.png?v=173"><link rel="icon" href="icon-192.png?v=173"><link rel="stylesheet" href="styles.css?v=173">
+</head><body>
+<header><div><small>OZARK TRAVEL STEIN LEAGUE</small><h1>Live Scoring</h1></div><div class="headerActions"><b>Supabase 1.7.3</b><label class="themeControl">Theme<select id="themeSelect"><option value="auto">Auto</option><option value="light">Light</option><option value="dark">Dark</option></select></label></div></header>
+<div id="pullRefresh" class="pullRefresh" aria-hidden="true"><span class="pullSpinner">↻</span><span id="pullRefreshText">Pull down to refresh</span></div><div id="status">Starting…</div>
+<main>
+<section id="login" class="card hidden"><h2>Administrator Login</h2><p>Use your league username and password.</p><label>Username<input id="username" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="admin"></label><label>Password<input id="password" type="password" autocomplete="current-password"></label><button id="loginBtn">Sign In</button><button id="spectatorBtn" class="secondary">Open Spectator Leaderboard</button></section>
+<section id="home" class="hidden"><div class="card"><div class="row"><h2>Tournaments</h2><div><button id="newBtn">+ New</button><button id="logoutBtn" class="secondary">Log Out</button></div></div><div id="tournaments"></div></div></section>
+<section id="create" class="card hidden"><h2>New Tournament</h2><div class="grid"><label>Name<input id="newName" value="Ozark Travel Stein League"></label><label>Course<input id="newCourse"></label><label>Date<input id="newDate" type="date"></label><label>Holes<select id="newHoles"><option>18</option><option>9</option></select></label></div><button id="createBtn">Create Tournament</button><button data-back class="secondary">Cancel</button></section>
+<section id="event" class="hidden">
+<div class="card"><div class="row"><button id="backBtn" class="secondary">← Tournaments</button><span id="roleBadge"></span></div><h2 id="eventName"></h2><p id="eventMeta"></p></div>
+<nav class="card tabs"><button data-tab="leader">Leaderboard</button><button data-tab="score">Scores</button><button data-tab="skins">Skins</button><button data-tab="players">Players</button><button data-tab="setup">Setup</button></nav>
+<div id="leader" class="card pane"></div>
+<div id="score" class="card pane hidden"><h2>Enter Scores</h2><p class="muted">Choose a group and hole, then tap 1–12 for each player. Scores save immediately.</p><div class="row scorefilters"><select id="groupSelect"></select><select id="holeSelect"></select></div><div id="scoreHoleMeta" class="holeMeta"></div><div id="scoreGrid"></div><div class="row"><button id="prevHole" class="secondary">← Hole</button><button id="nextHole">Next Hole →</button></div></div>
+<div id="skins" class="card pane hidden"><h2>Skins</h2><div class="skincols"><div><h3>Handicap Skins</h3><div id="handicapSkins"></div></div><div><h3>Blind Skins</h3><div id="blindSkins"></div></div></div></div>
+<div id="players" class="card pane hidden"><h2>Players</h2><div class="grid"><label>Name<input id="playerName"></label><label>Course handicap<input id="playerHcp" type="number" value="0"></label><label>Group<select id="playerGroup"></select></label></div><button id="addPlayer">Add Player</button><div id="playerList"></div></div>
+<div id="setup" class="card pane hidden"><h2>Setup</h2><div class="grid"><label>Tournament name<input id="editName"></label><label>Course<input id="editCourse"></label><label>Date<input id="editDate" type="date"></label><label>Active for spectators<input id="activeEvent" type="checkbox"></label></div><h3>Hole Setup</h3><p class="muted">Set each hole’s par and handicap/stroke index. Check the holes used for each skins contest.</p><div id="holeSetup"></div><button id="saveSetup">Save Setup</button><hr><h3>Private Group Links</h3><button id="generateLinks">Generate New Links</button><div id="links"></div><hr><button id="clearScores" class="danger">Clear All Scores</button></div>
+</section>
+</main><div id="toast" class="toast hidden"></div>
+<script>
+(function(){
+  const KEY='otsl-theme';
+  const media=window.matchMedia('(prefers-color-scheme: dark)');
+  function apply(value){
+    const resolved=value==='auto'?(media.matches?'dark':'light'):value;
+    document.documentElement.dataset.theme=resolved;
+    const meta=document.querySelector('meta[name="theme-color"]');
+    if(meta) meta.content=resolved==='dark'?'#071a14':'#0b3428';
+  }
+  const saved=localStorage.getItem(KEY)||'auto';
+  apply(saved);
+  window.addEventListener('DOMContentLoaded',function(){
+    const sel=document.getElementById('themeSelect');
+    if(!sel)return;
+    sel.value=saved;
+    sel.addEventListener('change',function(){localStorage.setItem(KEY,sel.value);apply(sel.value)});
+  });
+  if(media.addEventListener)media.addEventListener('change',function(){if((localStorage.getItem(KEY)||'auto')==='auto')apply('auto')});
+})();
+</script>
+
+<script>
+(function(){
+  let startY=0, pulling=false, distance=0;
+  const threshold=74;
+  const indicator=document.getElementById('pullRefresh');
+  const text=document.getElementById('pullRefreshText');
+  function atTop(){return window.scrollY<=0;}
+  function reset(){
+    pulling=false; distance=0;
+    if(indicator){indicator.classList.remove('show','ready','refreshing');indicator.style.transform='translate(-50%,-56px)';}
+    if(text)text.textContent='Pull down to refresh';
+  }
+  window.addEventListener('touchstart',function(e){
+    if(e.touches.length!==1||!atTop())return;
+    startY=e.touches[0].clientY; pulling=true; distance=0;
+  },{passive:true});
+  window.addEventListener('touchmove',function(e){
+    if(!pulling||!atTop())return;
+    const dy=e.touches[0].clientY-startY;
+    if(dy<=0){reset();return;}
+    distance=Math.min(dy*0.55,110);
+    if(indicator){
+      indicator.classList.add('show');
+      indicator.style.transform='translate(-50%,'+Math.min(distance-56,34)+'px)';
+      indicator.classList.toggle('ready',distance>=threshold);
+    }
+    if(text)text.textContent=distance>=threshold?'Release to refresh':'Pull down to refresh';
+  },{passive:true});
+  window.addEventListener('touchend',function(){
+    if(!pulling)return;
+    const shouldRefresh=distance>=threshold;
+    pulling=false;
+    if(shouldRefresh){
+      if(indicator){indicator.classList.add('refreshing');indicator.style.transform='translate(-50%,8px)';}
+      if(text)text.textContent='Refreshing…';
+      setTimeout(function(){window.location.reload();},180);
+    } else reset();
+  },{passive:true});
+  window.addEventListener('touchcancel',reset,{passive:true});
+})();
+</script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script src="supabase-config.js?v=173"></script><script src="app-v1.7.3.js?v=173"></script>
+</body></html>
