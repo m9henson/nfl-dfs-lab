@@ -18,31 +18,26 @@ function download(name:string,text:string){
 
 function scorePlayer(p:DfsPlayer):DfsPlayer{
  const pos=p.position.toUpperCase()
- const projectionBench=pos==='QB'?30:pos==='DST'?15:pos==='TE'?20:25
- const projectionScore=clamp((p.projection||0)/projectionBench*100)
- let usage=50
- if(pos==='RB') usage=clamp(25+(p.carries||0)*2+(p.targets||0)*3+(p.redZoneTouches||0)*4)
- if(pos==='WR'||pos==='TE') usage=clamp(20+(p.targets||0)*5+(p.targetShare||0)*120+(p.airYardsShare||0)*45+(p.redZoneTouches||0)*4)
- if(pos==='QB') usage=clamp(35+(p.projection||0)*1.7)
- if(pos==='DST') usage=clamp(45+(p.projection||0)*3)
+ let opportunity=50
+ if(pos==='RB') opportunity=clamp(25+(p.carries||0)*2+(p.targets||0)*3+(p.redZoneTouches||0)*4)
+ if(pos==='WR'||pos==='TE') opportunity=clamp(20+(p.targets||0)*5+(p.targetShare||0)*120+(p.airYardsShare||0)*45+(p.redZoneTouches||0)*4)
+ if(pos==='QB') opportunity=clamp(40+(p.projection||0)*1.5)
+ if(pos==='DST') opportunity=clamp(45+(p.projection||0)*3)
 
- const dvp=clamp(100-((p.defenseVsPositionRank||16)-1)*(100/31))
+ const matchup=clamp(100-((p.defenseVsPositionRank||16)-1)*(100/31))
  const vegas=clamp(35+((p.gameTotal||44)-40)*3+((p.teamImplied||22)-20)*4-(Math.max(0,p.spread||0))*1.5)
- const recent=p.recentFantasyAvg||0, historical=p.historyFantasyAvg||0
- const recentForm=recent&&historical?clamp(50+((recent/historical)-1)*75):50
  const rawValue=p.salary?p.projection/(p.salary/1000):0
  const value=clamp(rawValue*18)
- const ceiling=clamp((p.ceiling||p.projection*1.25)/Math.max(1,projectionBench*1.28)*100)
- // Until a reliable shadow-coverage feed is connected, WR/CB is a team-coverage proxy
- // built from how the opponent has defended WR fantasy production.
- const wrCb=pos==='WR'?clamp(p.wrCbMatchupScore??dvp):50
- const rating=clamp(
-   projectionScore*.22 + usage*.18 + dvp*.14 + vegas*.10 + recentForm*.12 +
-   value*.10 + ceiling*.10 + wrCb*.04
- )
- return {...p,projectionScore,opportunityScore:usage,matchupScore:dvp,vegasScore:vegas,
-   recentFormScore:recentForm,valueScore:value,ceilingScore:ceiling,wrCbMatchupScore:wrCb,
-   leverageScore:50,dfsScore:rating,playerRating:rating}
+ const ceiling=clamp((p.ceiling||p.projection*1.25)*3)
+ const leverage=clamp((p.ceiling||0)*2.2-(p.ownership||0)*1.5+20)
+ let injuryAdj=0
+ const inj=(p.injuryStatus||p.status||'').toLowerCase()
+ if(inj.includes('out')||inj.includes('ir')) injuryAdj=-35
+ else if(inj.includes('doubt')) injuryAdj=-20
+ else if(inj.includes('question')) injuryAdj=-7
+ const weatherAdj=((p.weatherScore??100)-100)*.12
+ const dfs=clamp(opportunity*.27+matchup*.16+vegas*.14+value*.20+ceiling*.15+leverage*.08+weatherAdj+injuryAdj)
+ return {...p,opportunityScore:opportunity,matchupScore:matchup,vegasScore:vegas,valueScore:value,ceilingScore:ceiling,leverageScore:leverage,dfsScore:dfs}
 }
 
 export function Page(){
@@ -58,29 +53,8 @@ export function Page(){
  const [tab,setTab]=useState<'dashboard'|'players'|'optimizer'|'lineups'>('dashboard')
  const [settings,setSettings]=useState({lineupCount:20,salaryCap:50000,minSpend:48000,maxExposure:.7,minUnique:2,randomness:.08,attempts:30000,requireStack:true,requireBringBack:false,maxTeamPlayers:4})
 
- function buildDvp(rows:any[]){
-  const weekly=new Map<string,number>()
-  for(const r of rows){
-   const pos=String(r.position||'').toUpperCase()
-   if(!['QB','RB','WR','TE'].includes(pos)||!r.opponent)continue
-   const k=`${r.opponent}|${pos}|${r.week}`
-   weekly.set(k,(weekly.get(k)||0)+(Number(r.fantasyPoints)||0))
-  }
-  const grouped=new Map<string,number[]>()
-  for(const [k,pts] of weekly){const [team,pos]=k.split('|');const kp=`${team}|${pos}`;grouped.set(kp,[...(grouped.get(kp)||[]),pts])}
-  const result=new Map<string,{rank:number,points:number}>()
-  for(const pos of ['QB','RB','WR','TE']){
-   const vals=[...grouped.entries()].filter(([k])=>k.endsWith(`|${pos}`)).map(([k,a])=>({k,points:avg(a)})).sort((a,b)=>b.points-a.points)
-   vals.forEach((x,i)=>result.set(x.k,{rank:i+1,points:x.points}))
-  }
-  return result
- }
-
  const scored=useMemo(()=>players.map(scorePlayer).sort((a,b)=>(b.dfsScore||0)-(a.dfsScore||0)),[players])
- const topByPosition=useMemo(()=>{
-  const positions=['QB','RB','WR','TE','DST']
-  return positions.map(position=>({position,players:scored.filter(p=>p.position.toUpperCase()===position).slice(0,3)}))
- },[scored])
+ const top=useMemo(()=>scored.slice(0,12),[scored])
 
  async function fetchSlates(){
   setLoading('slates');setError('')
@@ -109,31 +83,26 @@ export function Page(){
   if(!players.length)return setError('Load a DraftKings slate first.')
   setLoading('nflverse');setError('')
   try{
-   const r=await fetch(`/api/nfl/weekly-stats?season=${season}&week=${week}&history=8`),d=await r.json()
+   const r=await fetch(`/api/nfl/weekly-stats?season=${season}&week=${week}&history=5`),d=await r.json()
    if(!r.ok)throw Error(d.detail||d.error)
    const grouped=new Map<string,any[]>()
    for(const row of d.rows||[]){
     const k=normalize(row.name);grouped.set(k,[...(grouped.get(k)||[]),row])
    }
-   const dvp=buildDvp(d.rows||[])
+   const defenseRanks=d.defenseRanks||{}
    setPlayers(all=>all.map(p=>{
-    const rows=(grouped.get(normalize(p.name))||[]).sort((a,b)=>a.week-b.week)
-    const fantasy=rows.map(x=>Number(x.fantasyPoints)||0)
-    const recent=fantasy.slice(-3)
-    const dvpRow=dvp.get(`${p.opponent}|${p.position.toUpperCase()}`)
-    return scorePlayer({...p,
-      targets:rows.length?avg(rows.map(x=>x.targets)):p.targets,carries:rows.length?avg(rows.map(x=>x.carries)):p.carries,
-      receptions:rows.length?avg(rows.map(x=>x.receptions)):p.receptions,targetShare:rows.length?avg(rows.map(x=>x.targetShare)):p.targetShare,
-      airYardsShare:rows.length?avg(rows.map(x=>x.airYardsShare)):p.airYardsShare,wopr:rows.length?avg(rows.map(x=>x.wopr)):p.wopr,
-      recentFantasyAvg:recent.length?avg(recent):p.recentFantasyAvg,historyFantasyAvg:fantasy.length?avg(fantasy):p.historyFantasyAvg,
-      ceiling:fantasy.length?Math.max(...fantasy,p.ceiling):p.ceiling,
-      defenseVsPositionRank:dvpRow?.rank||p.defenseVsPositionRank,
-      defenseVsPositionPoints:dvpRow?.points||p.defenseVsPositionPoints,
-      wrCbMatchupScore:p.position.toUpperCase()==='WR'&&dvpRow?clamp(100-(dvpRow.rank-1)*(100/31)):p.wrCbMatchupScore
+    const rows=grouped.get(normalize(p.name))||[]
+    const dvp=defenseRanks?.[p.position]?.[p.opponent||'']
+    if(!rows.length&&!dvp)return p
+    return scorePlayer({...p,defenseVsPositionRank:dvp?.rank??p.defenseVsPositionRank,
+      targets:avg(rows.map(x=>x.targets)),carries:avg(rows.map(x=>x.carries)),
+      receptions:avg(rows.map(x=>x.receptions)),targetShare:avg(rows.map(x=>x.targetShare)),
+      airYardsShare:avg(rows.map(x=>x.airYardsShare)),wopr:avg(rows.map(x=>x.wopr)),
+      projection:avg(rows.map(x=>x.fantasyPoints))||p.projection,
+      ceiling:Math.max(...rows.map(x=>x.fantasyPoints),p.ceiling)
     })
    }))
-   const sourceSeason=d.dataSeason||d.season
-   setDataStatus(s=>[...s.filter(x=>!x.startsWith('nflverse')),`nflverse history + DVP loaded · ${d.rows?.length||0} rows · ${sourceSeason} data`])
+   setDataStatus(s=>[...s.filter(x=>!x.startsWith('nflverse')),'nflverse usage/history loaded'])
   }catch(e){setError(String(e))}finally{setLoading('')}
  }
  async function loadWWO(){
@@ -145,6 +114,33 @@ export function Page(){
    const map=new Map((d.values||[]).map((x:any)=>[normalize(x.name),x]))
    setPlayers(all=>all.map(p=>{const x:any=map.get(normalize(p.name));return x?scorePlayer({...p,projection:+x.projection,ceiling:Math.max(+x.projection*1.28,p.ceiling),externalProjection:+x.projection,externalValue:+x.value,externalSource:d.source}):p}))
    setDataStatus(s=>[...s.filter(x=>!x.startsWith('Win With Odds')),'Win With Odds projections loaded'])
+  }catch(e){setError(String(e))}finally{setLoading('')}
+ }
+ async function loadSleeper(){
+  if(!players.length)return setError('Load a DraftKings slate first.')
+  setLoading('sleeper');setError('')
+  try{const [a,b]=await Promise.all([fetch('/api/nfl/sleeper/players'),fetch('/api/nfl/sleeper/trending?hours=24&limit=100')]),pd=await a.json(),td=await b.json();if(!a.ok)throw Error(pd.detail||pd.error)
+   const by=new Map<string,any>();Object.values(pd.players||{}).forEach((x:any)=>{const n=`${x.first_name||''} ${x.last_name||''}`.trim();if(n)by.set(normalize(n),x)})
+   const tr=new Map<string,number>();for(const x of td.rows||[])tr.set(String(x.player_id),Number(x.count)||0)
+   setPlayers(all=>all.map(q=>{const x:any=by.get(normalize(q.name));return x?scorePlayer({...q,depthChartOrder:Number(x.depth_chart_order||x.depth_chart_position||0)||undefined,injuryStatus:x.injury_status||x.status||'',practiceParticipation:x.practice_participation||'',trendingAdds:tr.get(String(x.player_id))||0}):q}))
+   setDataStatus(z=>[...z.filter(x=>!x.startsWith('Sleeper')),'Sleeper injury/depth/trending loaded'])
+  }catch(e){setError(String(e))}finally{setLoading('')}
+ }
+ async function loadRedZone(){
+  if(!players.length)return setError('Load a DraftKings slate first.')
+  setLoading('redzone');setError('')
+  try{const r=await fetch(`/api/nfl/redzone?season=${season}&week=${week}&history=5`),d=await r.json();if(!r.ok)throw Error(d.detail||d.error);const m=new Map((d.players||[]).map((x:any)=>[normalize(x.name),x]))
+   setPlayers(all=>all.map(q=>{const x:any=m.get(normalize(q.name));return x?scorePlayer({...q,redZoneTouches:x.redZoneTouches,insideTenTouches:x.insideTenTouches,insideFiveTouches:x.insideFiveTouches,redZoneTargets:x.redZoneTargets,redZoneCarries:x.redZoneCarries}):q}))
+   setDataStatus(z=>[...z.filter(x=>!x.startsWith('Red-zone')),'Red-zone/goal-line usage loaded'])
+  }catch(e){setError(String(e))}finally{setLoading('')}
+ }
+ async function loadWeather(){
+  if(!players.length)return setError('Load a DraftKings slate first.')
+  setLoading('weather');setError('')
+  try{const homes=new Set<string>();players.forEach(q=>{const m=(q.game||'').match(/([A-Z]{2,3})@([A-Z]{2,3})/);if(m)homes.add(m[2])});const wx=new Map<string,any>()
+   await Promise.all([...homes].map(async h=>{const r=await fetch(`/api/nfl/weather?homeTeam=${h}`),d=await r.json();if(r.ok)wx.set(h,d)}))
+   setPlayers(all=>all.map(q=>{const m=(q.game||'').match(/([A-Z]{2,3})@([A-Z]{2,3})/),d:any=m?wx.get(m[2]):undefined;return d?scorePlayer({...q,weatherTempF:d.weather?.tempF,weatherWindMph:d.weather?.windMph,weatherGustMph:d.weather?.gustMph,weatherPrecipProb:d.weather?.precipProb,weatherScore:d.weather?.score??100}):q}))
+   setDataStatus(z=>[...z.filter(x=>!x.startsWith('Weather')),'Weather loaded'])
   }catch(e){setError(String(e))}finally{setLoading('')}
  }
  function patch(name:string,x:Partial<DfsPlayer>){setPlayers(all=>all.map(p=>p.name===name?scorePlayer({...p,...x}):p))}
@@ -177,20 +173,20 @@ export function Page(){
     </div>
     <div className="card">
      <div className="cardTitle"><div><span className="step">2</span><strong>NFL data sources</strong></div></div>
-     <button className="secondary wide" onClick={loadNFLVerse}>{loading==='nflverse'?'Loading…':'Load nflverse history + DVP'}</button>
+     <button className="secondary wide" onClick={loadNFLVerse}>{loading==='nflverse'?'Loading…':'Load nflverse usage + history'}</button>
      <button className="secondary wide" onClick={loadWWO}>{loading==='wwo'?'Loading…':'Load Win With Odds projections'}</button>
+     <button className="secondary wide" onClick={loadSleeper}>{loading==='sleeper'?'Loading…':'Load Sleeper injuries + depth'}</button>
+     <button className="secondary wide" onClick={loadRedZone}>{loading==='redzone'?'Loading…':'Load red-zone + goal-line usage'}</button>
+     <button className="secondary wide" onClick={loadWeather}>{loading==='weather'?'Loading…':'Load game weather'}</button>
      <div className="sourceList">{dataStatus.length?dataStatus.map(x=><div className="sourceStatus" key={x}>✓ {x}</div>):<div className="empty">No data loaded yet.</div>}</div>
     </div>
    </section>
    <section className="card">
-    <div className="cardTitle"><div><span className="step">3</span><strong>Top 3 by position</strong></div><span className="badge">{players.length} players</span></div>
-    {topByPosition.map(group=><div className="positionGroup" key={group.position}>
-     <div className="positionHeading"><strong>{group.position}</strong><span className="muted tiny">Top player ratings</span></div>
-     <div className="scoreGrid">{group.players.map((p,i)=><article className="scoreCard" key={`${group.position}-${p.name}`}>
-      <div className="rank">{i+1}</div><div><strong>{p.name}</strong><div className="muted tiny">{p.position} · {p.team} · {money(p.salary)}</div></div><div className="bigScore">{p.dfsScore?.toFixed(0)}</div>
-      <div className="breakdown"><span>Proj {p.projectionScore?.toFixed(0)}</span><span>Usage {p.opportunityScore?.toFixed(0)}</span><span>DVP {p.matchupScore?.toFixed(0)}</span><span>Vegas {p.vegasScore?.toFixed(0)}</span><span>Form {p.recentFormScore?.toFixed(0)}</span><span>Value {p.valueScore?.toFixed(0)}</span><span>Ceil {p.ceilingScore?.toFixed(0)}</span>{p.position==='WR'&&<span>WR/CB {p.wrCbMatchupScore?.toFixed(0)}</span>}</div>
-     </article>)}</div>
-    </div>)}
+    <div className="cardTitle"><div><span className="step">3</span><strong>Top NFL DFS plays</strong></div><span className="badge">{players.length} players</span></div>
+    <div className="scoreGrid">{top.map((p,i)=><article className="scoreCard" key={p.name}>
+     <div className="rank">{i+1}</div><div><strong>{p.name}</strong><div className="muted tiny">{p.position} · {p.team} · {money(p.salary)}</div></div><div className="bigScore">{p.dfsScore?.toFixed(0)}</div>
+     <div className="breakdown"><span>Opp {p.opportunityScore?.toFixed(0)}</span><span>Match {p.matchupScore?.toFixed(0)}</span><span>Value {p.valueScore?.toFixed(0)}</span><span>Ceil {p.ceilingScore?.toFixed(0)}</span></div>
+    </article>)}</div>
    </section>
   </>}
 
@@ -201,7 +197,7 @@ export function Page(){
     <label className="mini">Projection<input type="number" step=".1" value={p.projection} onChange={e=>patch(p.name,{projection:+e.target.value})}/></label>
     <label className="mini">Ownership %<input type="number" step=".1" value={p.ownership} onChange={e=>patch(p.name,{ownership:+e.target.value})}/></label>
     <div className="playerActions"><button className={p.locked?'smallBtn locked':'smallBtn'} onClick={()=>patch(p.name,{locked:!p.locked,excluded:false})}>{p.locked?'Locked':'Lock'}</button><button className={p.excluded?'smallBtn excluded':'smallBtn'} onClick={()=>patch(p.name,{excluded:!p.excluded,locked:false})}>{p.excluded?'Excluded':'Exclude'}</button></div>
-    <div className="metricStrip"><span>Rating {p.playerRating?.toFixed(0)}</span><span>Proj {p.projectionScore?.toFixed(0)}</span><span>Usage {p.opportunityScore?.toFixed(0)}</span><span>DVP {p.defenseVsPositionRank?`#${p.defenseVsPositionRank}`:'—'}</span><span>Vegas {p.vegasScore?.toFixed(0)}</span><span>Form {p.recentFormScore?.toFixed(0)}</span><span>Value {p.valueScore?.toFixed(0)}</span><span>Ceil {p.ceilingScore?.toFixed(0)}</span>{p.position==='WR'&&<span>WR/CB proxy {p.wrCbMatchupScore?.toFixed(0)}</span>}<span>Targets {p.targets?.toFixed(1)||'—'}</span><span>Carries {p.carries?.toFixed(1)||'—'}</span></div>
+    <div className="metricStrip"><span>Targets {p.targets?.toFixed(1)||'—'}</span><span>Carries {p.carries?.toFixed(1)||'—'}</span><span>Tgt share {p.targetShare?`${(p.targetShare*100).toFixed(0)}%`:'—'}</span><span>RZ {p.redZoneTouches??'—'}</span><span>Inside 5 {p.insideFiveTouches??'—'}</span><span>DvP {p.defenseVsPositionRank?`#${p.defenseVsPositionRank}`:'—'}</span><span>Wind {p.weatherWindMph!==undefined?`${p.weatherWindMph.toFixed(0)} mph`:'—'}</span><span>{p.injuryStatus||'Healthy'}</span><span>Value {p.valueScore?.toFixed(0)}</span></div>
    </article>)}</div>
   </section>}
 
