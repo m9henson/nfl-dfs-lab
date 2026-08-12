@@ -235,50 +235,107 @@ app.post('/api/ai/explain', async (c) => {
 app.get('/api/nfl/sleeper/players',async c=>{const k='sleeper:nfl:players',h=cached<any>(k);if(h)return c.json(h);try{const players=await fetchJson('https://api.sleeper.app/v1/players/nfl?active=true');const p={source:'Sleeper API',players};store(k,p,86400000);return c.json(p)}catch(e){return c.json({error:'Sleeper player fetch failed',detail:e instanceof Error?e.message:String(e)},502)}})
 app.get('/api/nfl/sleeper/trending',async c=>{const h=Math.max(1,Math.min(168,Number(c.req.query('hours')||24))),l=Math.max(5,Math.min(100,Number(c.req.query('limit')||50)));try{return c.json({source:'Sleeper trending adds',rows:await fetchJson(`https://api.sleeper.app/v1/players/nfl/trending/add?lookback_hours=${h}&limit=${l}`)})}catch(e){return c.json({error:'Sleeper trending fetch failed',detail:e instanceof Error?e.message:String(e)},502)}})
 app.get('/api/nfl/weather',async c=>{const team=String(c.req.query('homeTeam')||'').toUpperCase(),st=NFL_STADIUMS[team];if(!st)return c.json({error:'Unknown home team'},400);if(st.dome)return c.json({source:'stadium metadata',dome:true,weather:{score:100}});try{const u=new URL('https://api.open-meteo.com/v1/forecast');u.searchParams.set('latitude',String(st.lat));u.searchParams.set('longitude',String(st.lon));u.searchParams.set('hourly','temperature_2m,precipitation_probability,wind_speed_10m,wind_gusts_10m');u.searchParams.set('temperature_unit','fahrenheit');u.searchParams.set('wind_speed_unit','mph');u.searchParams.set('timezone','auto');u.searchParams.set('forecast_days','16');const d=await fetchJson(u.toString()),i=0,temp=Number(d?.hourly?.temperature_2m?.[i]||0),wind=Number(d?.hourly?.wind_speed_10m?.[i]||0),gust=Number(d?.hourly?.wind_gusts_10m?.[i]||0),precip=Number(d?.hourly?.precipitation_probability?.[i]||0);let score=100;if(wind>=20)score-=28;else if(wind>=15)score-=18;else if(wind>=10)score-=8;if(gust>=30)score-=12;if(precip>=70)score-=12;else if(precip>=40)score-=6;if(temp<=25)score-=6;return c.json({source:'Open-Meteo',dome:false,weather:{tempF:temp,windMph:wind,gustMph:gust,precipProb:precip,score:Math.max(0,score)}})}catch(e){return c.json({error:'Weather fetch failed',detail:e instanceof Error?e.message:String(e)},502)}})
-app.get('/api/nfl/redzone',async c=>{const season=Number(c.req.query('season')||new Date().getFullYear()),targetWeek=Number(c.req.query('week')||1),history=Math.max(1,Math.min(8,Number(c.req.query('history')||5)));try{const r=await fetch(`https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_${season}.csv.gz`);if(!r.ok)throw Error(`nflverse pbp ${r.status}`);const csv=gunzipSync(Buffer.from(await r.arrayBuffer())).toString('utf8'),rows=parseCsv(csv,{columns:true,skip_empty_lines:true,relax_quotes:true,relax_column_count:true}) as any[],min=Math.max(1,targetWeek-history),m=new Map<string,any>();const add=(name:string,team:string,y:number,t:boolean,car:boolean)=>{if(!name||!team||y>20)return;const k=normalizeName(name),v=m.get(k)||{name,team,redZoneTouches:0,insideTenTouches:0,insideFiveTouches:0,redZoneTargets:0,redZoneCarries:0};v.redZoneTouches++;if(y<=10)v.insideTenTouches++;if(y<=5)v.insideFiveTouches++;if(t)v.redZoneTargets++;if(car)v.redZoneCarries++;m.set(k,v)};for(const x of rows){const w=Number(x.week),y=Number(x.yardline_100);if(w<min||w>=targetWeek||!Number.isFinite(y)||y>20)continue;if(Number(x.pass_attempt)===1)add(String(x.receiver_player_name||''),String(x.posteam||''),y,true,false);if(Number(x.rush_attempt)===1)add(String(x.rusher_player_name||''),String(x.posteam||''),y,false,true)}return c.json({source:'nflverse play-by-play',players:[...m.values()]})}catch(e){return c.json({error:'nflverse red-zone fetch failed',detail:e instanceof Error?e.message:String(e)},502)}})
+app.get('/api/nfl/redzone', async c => {
+  const requestedSeason = Number(c.req.query('season') || new Date().getFullYear())
+  const targetWeek = Number(c.req.query('week') || 1)
+  const history = Math.max(1, Math.min(8, Number(c.req.query('history') || 5)))
 
-app.get('/api/values/football', async (c) => {
-  const key = 'football-values:winwithodds'
-  const hit = cached<any>(key)
-  if (hit) return c.json(hit)
+  async function loadSeasonPbp(season: number) {
+    const cacheKey = `nflverse:redzone:season:${season}`
+    const cachedSeason = cached<any>(cacheKey)
+    if (cachedSeason) return cachedSeason
+
+    const url = `https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_${season}.csv.gz`
+    const r = await fetch(url, { headers: { 'user-agent': 'NFLDFSLab/1.1' } })
+    if (!r.ok) throw new Error(`nflverse PBP ${season} returned ${r.status}`)
+
+    const csv = gunzipSync(Buffer.from(await r.arrayBuffer())).toString('utf8')
+    const rows = parseCsv(csv, {
+      columns: true,
+      skip_empty_lines: true,
+      relax_quotes: true,
+      relax_column_count: true
+    }) as any[]
+
+    // Store only the fields this app needs, which makes subsequent requests cheap.
+    const compact = rows
+      .filter(x => String(x.season_type || 'REG') === 'REG')
+      .map(x => ({
+        week: Number(x.week),
+        yardline: Number(x.yardline_100),
+        team: String(x.posteam || ''),
+        receiver: String(x.receiver_player_name || ''),
+        rusher: String(x.rusher_player_name || ''),
+        passAttempt: Number(x.pass_attempt) === 1,
+        rushAttempt: Number(x.rush_attempt) === 1
+      }))
+
+    store(cacheKey, compact, 6 * 60 * 60_000)
+    return compact
+  }
 
   try {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 9000)
-    let html = ''
+    // Week 1 has no current-season historical PBP. Use the prior season's
+    // final regular-season weeks as a baseline. For later weeks, try the
+    // current season first and automatically fall back if the release isn't live yet.
+    let sourceSeason = targetWeek <= 1 ? requestedSeason - 1 : requestedSeason
+    let rows: any[]
+
     try {
-      const res = await fetch('https://www.winwithodds.com/dfs', {
-        signal: controller.signal,
-        headers: { accept: 'text/html,application/xhtml+xml', 'user-agent': 'UltimateDFS/1.0 (+server-side value importer)' }
-      })
-      if (!res.ok) throw new Error(`Upstream returned ${res.status}`)
-      html = await res.text()
-    } finally { clearTimeout(timeout) }
+      rows = await loadSeasonPbp(sourceSeason)
+    } catch (error) {
+      if (sourceSeason === requestedSeason) {
+        sourceSeason = requestedSeason - 1
+        rows = await loadSeasonPbp(sourceSeason)
+      } else {
+        throw error
+      }
+    }
 
-    const $ = cheerio.load(html)
-    const bodyText = $('body').text().replace(/\s+/g, ' ')
-    const updatedMatch = bodyText.match(/Updated\s+([0-9/]+\s+[0-9:]+\s+[AP]M\s+ET)/i)
-    const updatedAt = updatedMatch?.[1] || ''
-    const values: Array<{ rank:number; name:string; position:string; salary:number; projection:number; value:number }> = []
+    const sourceTargetWeek = sourceSeason === requestedSeason ? targetWeek : 19
+    const minWeek = Math.max(1, sourceTargetWeek - history)
+    const agg = new Map<string, any>()
 
-    $('table tr').each((_, tr) => {
-      const cells = $(tr).find('th,td').map((__, td) => $(td).text().trim()).get()
-      if (cells.length < 6 || /player name/i.test(cells.join(' '))) return
-      const rank = Number(cells[0])
-      const salary = Number(cells[3].replace(/[$,]/g, ''))
-      const projection = Number(cells[4])
-      const value = Number(cells[5])
-      if (!cells[1] || !cells[2] || !Number.isFinite(projection)) return
-      values.push({ rank:Number.isFinite(rank)?rank:values.length+1, name:cells[1], position:cells[2].toUpperCase(), salary:Number.isFinite(salary)?salary:0, projection, value:Number.isFinite(value)?value:0 })
+    const add = (name: string, team: string, yardline: number, target: boolean, carry: boolean) => {
+      if (!name || !team || !Number.isFinite(yardline) || yardline > 20) return
+      const key = normalizeName(name)
+      const v = agg.get(key) || {
+        name,
+        team,
+        redZoneTouches: 0,
+        insideTenTouches: 0,
+        insideFiveTouches: 0,
+        redZoneTargets: 0,
+        redZoneCarries: 0
+      }
+      v.redZoneTouches++
+      if (yardline <= 10) v.insideTenTouches++
+      if (yardline <= 5) v.insideFiveTouches++
+      if (target) v.redZoneTargets++
+      if (carry) v.redZoneCarries++
+      agg.set(key, v)
+    }
+
+    for (const x of rows) {
+      if (x.week < minWeek || x.week >= sourceTargetWeek) continue
+      if (x.passAttempt) add(x.receiver, x.team, x.yardline, true, false)
+      if (x.rushAttempt) add(x.rusher, x.team, x.yardline, false, true)
+    }
+
+    return c.json({
+      source: 'nflverse play-by-play',
+      requestedSeason,
+      sourceSeason,
+      targetWeek,
+      history,
+      fallbackUsed: sourceSeason !== requestedSeason,
+      players: [...agg.values()]
     })
-
-    if (!values.length) throw new Error('No DFS value rows were found')
-    const payload = { source:'Win With Odds DFS Values', sourceUrl:'https://www.winwithodds.com/dfs', updatedAt, fetchedAt:new Date().toISOString(), values }
-    store(key, payload, 15 * 60_000)
-    c.header('Cache-Control', 'public, max-age=300')
-    return c.json(payload)
-  } catch (error) {
-    return c.json({ error:'Win With Odds football-value fetch failed', detail:error instanceof Error?error.message:String(error) }, 502)
+  } catch (e) {
+    return c.json({
+      error: 'nflverse red-zone fetch failed',
+      detail: e instanceof Error ? e.message : String(e)
+    }, 502)
   }
 })
 

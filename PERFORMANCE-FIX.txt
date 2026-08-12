@@ -1,0 +1,19 @@
+NFL DFS Lab performance/data fix
+
+1) nflverse PBP
+- Week 1 of a new season now uses prior-season weeks 14-18 as its baseline.
+- If current-season PBP isn't published yet, the endpoint automatically falls back one season.
+- Parsed compact PBP is cached in Render memory for 6 hours.
+- The correct nflverse release URL remains:
+  /releases/download/pbp/play_by_play_YEAR.csv.gz
+
+2) Optimizer
+- Default attempts reduced from 30,000 to 2,500.
+- Hard maximum reduced to 5,000.
+- Candidate lists are precomputed once and trimmed to the best 30-42 players per slot.
+- Early-stop once enough distinct candidate lineups are found.
+- This removes repeated full player-pool filtering and is intended for iPhone/mobile use.
+
+Expected result:
+- Generate 20 lineups in seconds rather than timing out.
+- 2026 Week 1 red-zone load should say it is using a 2025 baseline rather than returning 404.
