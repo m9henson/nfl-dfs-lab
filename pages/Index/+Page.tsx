@@ -51,7 +51,7 @@ export function Page(){
  const [week,setWeek]=useState(1)
  const [dataStatus,setDataStatus]=useState<string[]>([])
  const [tab,setTab]=useState<'dashboard'|'players'|'optimizer'|'lineups'>('dashboard')
- const [settings,setSettings]=useState({lineupCount:20,salaryCap:50000,minSpend:48000,maxExposure:.7,minUnique:2,randomness:.08,attempts:30000,requireStack:true,requireBringBack:false,maxTeamPlayers:4})
+ const [settings,setSettings]=useState({lineupCount:20,salaryCap:50000,minSpend:48000,maxExposure:.7,minUnique:2,randomness:.08,attempts:2500,requireStack:true,requireBringBack:false,maxTeamPlayers:4})
 
  const scored=useMemo(()=>players.map(scorePlayer).sort((a,b)=>(b.dfsScore||0)-(a.dfsScore||0)),[players])
  const top=useMemo(()=>scored.slice(0,12),[scored])
@@ -131,7 +131,7 @@ export function Page(){
   setLoading('redzone');setError('')
   try{const r=await fetch(`/api/nfl/redzone?season=${season}&week=${week}&history=5`),d=await r.json();if(!r.ok)throw Error(d.detail||d.error);const m=new Map((d.players||[]).map((x:any)=>[normalize(x.name),x]))
    setPlayers(all=>all.map(q=>{const x:any=m.get(normalize(q.name));return x?scorePlayer({...q,redZoneTouches:x.redZoneTouches,insideTenTouches:x.insideTenTouches,insideFiveTouches:x.insideFiveTouches,redZoneTargets:x.redZoneTargets,redZoneCarries:x.redZoneCarries}):q}))
-   setDataStatus(z=>[...z.filter(x=>!x.startsWith('Red-zone')),'Red-zone/goal-line usage loaded'])
+   setDataStatus(z=>[...z.filter(x=>!x.startsWith('Red-zone')),`Red-zone/goal-line usage loaded${d.fallbackUsed ? ` (using ${d.sourceSeason} baseline)` : ''}`])
   }catch(e){setError(String(e))}finally{setLoading('')}
  }
  async function loadWeather(){
