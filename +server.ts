@@ -4,6 +4,8 @@ import vike from '@vikejs/hono'
 import type { Server } from 'vike/types'
 import OpenAI from 'openai'
 import * as cheerio from 'cheerio'
+import { gunzipSync } from 'node:zlib'
+import { parse as parseCsv } from 'csv-parse/sync'
 
 const app = new Hono()
 
@@ -61,6 +63,12 @@ function safeNumber(value: unknown) {
 function first<T>(...values: T[]) {
   return values.find((v) => v !== undefined && v !== null && v !== '') as T | undefined
 }
+
+
+const NFL_STADIUMS: Record<string,{lat:number;lon:number;dome?:boolean}> = {
+ARI:{lat:33.5276,lon:-112.2626,dome:true},ATL:{lat:33.7553,lon:-84.4006,dome:true},BAL:{lat:39.2780,lon:-76.6227},BUF:{lat:42.7738,lon:-78.7870},CAR:{lat:35.2258,lon:-80.8528},CHI:{lat:41.8623,lon:-87.6167},CIN:{lat:39.0954,lon:-84.5160},CLE:{lat:41.5061,lon:-81.6995},DAL:{lat:32.7473,lon:-97.0945,dome:true},DEN:{lat:39.7439,lon:-105.0201},DET:{lat:42.3400,lon:-83.0456,dome:true},GB:{lat:44.5013,lon:-88.0622},HOU:{lat:29.6847,lon:-95.4107,dome:true},IND:{lat:39.7601,lon:-86.1639,dome:true},JAX:{lat:30.3239,lon:-81.6373},KC:{lat:39.0489,lon:-94.4839},LV:{lat:36.0908,lon:-115.1830,dome:true},LAC:{lat:33.9535,lon:-118.3392,dome:true},LAR:{lat:33.9535,lon:-118.3392,dome:true},MIA:{lat:25.9580,lon:-80.2389},MIN:{lat:44.9738,lon:-93.2581,dome:true},NE:{lat:42.0909,lon:-71.2643},NO:{lat:29.9511,lon:-90.0812,dome:true},NYG:{lat:40.8135,lon:-74.0745},NYJ:{lat:40.8135,lon:-74.0745},PHI:{lat:39.9008,lon:-75.1675},PIT:{lat:40.4468,lon:-80.0158},SEA:{lat:47.5952,lon:-122.3316},SF:{lat:37.4030,lon:-121.9700},TB:{lat:27.9759,lon:-82.5033},TEN:{lat:36.1665,lon:-86.7713},WAS:{lat:38.9076,lon:-76.8645}}
+function normalizeName(s:string){return (s||'').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').replace(/\\b(jr|sr|ii|iii|iv)\\b/g,'').replace(/[^a-z0-9]/g,'')}
+function rankDefenseVsPosition(rows:any[]){const b=new Map<string,{points:number;weeks:Set<number>}>();for(const r of rows){const d=String(r.opponent||'').toUpperCase(),p=String(r.position||'').toUpperCase();if(!d||!['QB','RB','WR','TE'].includes(p))continue;const k=`${d}|${p}`,v=b.get(k)||{points:0,weeks:new Set<number>()};v.points+=Number(r.fantasyPoints||0)||0;v.weeks.add(Number(r.week)||0);b.set(k,v)}const out:Record<string,Record<string,{rank:number;avg:number}>>={};for(const p of ['QB','RB','WR','TE']){const a=[...b.entries()].filter(([k])=>k.endsWith(`|${p}`)).map(([k,v])=>({team:k.split('|')[0],avg:v.points/Math.max(1,v.weeks.size)})).sort((x,y)=>x.avg-y.avg);out[p]={};a.forEach((x,i)=>out[p][x.team]={rank:i+1,avg:x.avg})}return out}
 
 app.get('/api/health', (c) =>
   c.json({
@@ -223,6 +231,12 @@ app.post('/api/ai/explain', async (c) => {
 })
 
 
+
+app.get('/api/nfl/sleeper/players',async c=>{const k='sleeper:nfl:players',h=cached<any>(k);if(h)return c.json(h);try{const players=await fetchJson('https://api.sleeper.app/v1/players/nfl?active=true');const p={source:'Sleeper API',players};store(k,p,86400000);return c.json(p)}catch(e){return c.json({error:'Sleeper player fetch failed',detail:e instanceof Error?e.message:String(e)},502)}})
+app.get('/api/nfl/sleeper/trending',async c=>{const h=Math.max(1,Math.min(168,Number(c.req.query('hours')||24))),l=Math.max(5,Math.min(100,Number(c.req.query('limit')||50)));try{return c.json({source:'Sleeper trending adds',rows:await fetchJson(`https://api.sleeper.app/v1/players/nfl/trending/add?lookback_hours=${h}&limit=${l}`)})}catch(e){return c.json({error:'Sleeper trending fetch failed',detail:e instanceof Error?e.message:String(e)},502)}})
+app.get('/api/nfl/weather',async c=>{const team=String(c.req.query('homeTeam')||'').toUpperCase(),st=NFL_STADIUMS[team];if(!st)return c.json({error:'Unknown home team'},400);if(st.dome)return c.json({source:'stadium metadata',dome:true,weather:{score:100}});try{const u=new URL('https://api.open-meteo.com/v1/forecast');u.searchParams.set('latitude',String(st.lat));u.searchParams.set('longitude',String(st.lon));u.searchParams.set('hourly','temperature_2m,precipitation_probability,wind_speed_10m,wind_gusts_10m');u.searchParams.set('temperature_unit','fahrenheit');u.searchParams.set('wind_speed_unit','mph');u.searchParams.set('timezone','auto');u.searchParams.set('forecast_days','16');const d=await fetchJson(u.toString()),i=0,temp=Number(d?.hourly?.temperature_2m?.[i]||0),wind=Number(d?.hourly?.wind_speed_10m?.[i]||0),gust=Number(d?.hourly?.wind_gusts_10m?.[i]||0),precip=Number(d?.hourly?.precipitation_probability?.[i]||0);let score=100;if(wind>=20)score-=28;else if(wind>=15)score-=18;else if(wind>=10)score-=8;if(gust>=30)score-=12;if(precip>=70)score-=12;else if(precip>=40)score-=6;if(temp<=25)score-=6;return c.json({source:'Open-Meteo',dome:false,weather:{tempF:temp,windMph:wind,gustMph:gust,precipProb:precip,score:Math.max(0,score)}})}catch(e){return c.json({error:'Weather fetch failed',detail:e instanceof Error?e.message:String(e)},502)}})
+app.get('/api/nfl/redzone',async c=>{const season=Number(c.req.query('season')||new Date().getFullYear()),targetWeek=Number(c.req.query('week')||1),history=Math.max(1,Math.min(8,Number(c.req.query('history')||5)));try{const r=await fetch(`https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_${season}.csv.gz`);if(!r.ok)throw Error(`nflverse pbp ${r.status}`);const csv=gunzipSync(Buffer.from(await r.arrayBuffer())).toString('utf8'),rows=parseCsv(csv,{columns:true,skip_empty_lines:true,relax_quotes:true,relax_column_count:true}) as any[],min=Math.max(1,targetWeek-history),m=new Map<string,any>();const add=(name:string,team:string,y:number,t:boolean,car:boolean)=>{if(!name||!team||y>20)return;const k=normalizeName(name),v=m.get(k)||{name,team,redZoneTouches:0,insideTenTouches:0,insideFiveTouches:0,redZoneTargets:0,redZoneCarries:0};v.redZoneTouches++;if(y<=10)v.insideTenTouches++;if(y<=5)v.insideFiveTouches++;if(t)v.redZoneTargets++;if(car)v.redZoneCarries++;m.set(k,v)};for(const x of rows){const w=Number(x.week),y=Number(x.yardline_100);if(w<min||w>=targetWeek||!Number.isFinite(y)||y>20)continue;if(Number(x.pass_attempt)===1)add(String(x.receiver_player_name||''),String(x.posteam||''),y,true,false);if(Number(x.rush_attempt)===1)add(String(x.rusher_player_name||''),String(x.posteam||''),y,false,true)}return c.json({source:'nflverse play-by-play',players:[...m.values()]})}catch(e){return c.json({error:'nflverse red-zone fetch failed',detail:e instanceof Error?e.message:String(e)},502)}})
+
 app.get('/api/values/football', async (c) => {
   const key = 'football-values:winwithodds'
   const hit = cached<any>(key)
@@ -272,62 +286,52 @@ app.get('/api/values/football', async (c) => {
 app.get('/api/nfl/weekly-stats', async (c) => {
   const season = Number(c.req.query('season') || new Date().getFullYear())
   const targetWeek = Number(c.req.query('week') || 1)
-  const history = Math.max(3, Math.min(10, Number(c.req.query('history') || 8)))
-  if (!Number.isInteger(season) || !Number.isInteger(targetWeek)) return c.json({ error: 'Invalid season/week' }, 400)
+  const history = Math.max(1, Math.min(8, Number(c.req.query('history') || 5)))
+  if (!Number.isInteger(season) || !Number.isInteger(targetWeek)) {
+    return c.json({ error: 'Invalid season/week' }, 400)
+  }
 
-  const key = `nflverse:${season}:${targetWeek}:${history}:fallback-v2`
+  const key = `nflverse:${season}:${targetWeek}:${history}`
   const hit = cached<any>(key)
   if (hit) return c.json(hit)
 
   try {
-    // In August/early season the requested season's weekly-stat asset may not exist yet.
-    // Try the selected season first, then automatically fall back to the prior season
-    // so Week 1 still has useful historical usage, recent-form and DVP data.
-    let dataSeason=season, text='', sourceUrl=''
-    const attempts:number[]=[]
-    const candidateYears=targetWeek===1?[season-1,season-2]:[season,season-1,season-2]
-    for(const y of candidateYears){
-      attempts.push(y)
-      const url=`https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_${y}.csv`
-      const res=await fetch(url,{headers:{'accept':'text/csv,*/*','user-agent':'NFLDFSLab/1.1'}})
-      if(res.ok){dataSeason=y;text=await res.text();sourceUrl=url;break}
-      if(res.status!==404) throw new Error(`nflverse returned ${res.status} for ${y}`)
+    const url = `https://github.com/nflverse/nflverse-data/releases/download/player_stats/stats_player_week_${season}.csv`
+    const res = await fetch(url, { headers: { 'user-agent': 'NFLDFSLab/1.0' } })
+    if (!res.ok) throw new Error(`nflverse returned ${res.status}`)
+    const text = await res.text()
+    const lines = text.replace(/\r/g,'').split('\n').filter(Boolean)
+    const headers = lines[0].split(',')
+    const ix = (names:string[]) => names.map(n=>headers.indexOf(n)).find(i=>i>=0) ?? -1
+    const col = {
+      week: ix(['week']), name: ix(['player_display_name','player_name']),
+      pos: ix(['position','position_group']), team: ix(['recent_team','team']),
+      opp: ix(['opponent_team','opponent']), targets: ix(['targets']),
+      carries: ix(['carries','rushing_attempts']), receptions: ix(['receptions']),
+      fantasy: ix(['fantasy_points_ppr','fantasy_points']),
+      targetShare: ix(['target_share','tgt_sh']), airShare: ix(['air_yards_share','ay_sh']),
+      wopr: ix(['wopr'])
     }
-    if(!text) throw new Error(`No nflverse weekly player CSV found for ${attempts.join(', ')}`)
-
-    const lines=text.replace(/\r/g,'').split('\n').filter(Boolean)
-    const headers=lines[0].split(',').map(x=>x.replace(/^"|"$/g,''))
-    const ix=(names:string[])=>names.map(n=>headers.indexOf(n)).find(i=>i>=0)??-1
-    const col={
-      week:ix(['week']),name:ix(['player_display_name','player_name']),pos:ix(['position','position_group']),
-      team:ix(['recent_team','team']),opp:ix(['opponent_team','opponent']),targets:ix(['targets']),
-      carries:ix(['carries','rushing_attempts']),receptions:ix(['receptions']),fantasy:ix(['fantasy_points_ppr','fantasy_points']),
-      targetShare:ix(['target_share','tgt_sh']),airShare:ix(['air_yards_share','ay_sh']),wopr:ix(['wopr']),seasonType:ix(['season_type'])
-    }
-    if(col.week<0||col.name<0||col.pos<0||col.fantasy<0) throw new Error('nflverse CSV schema did not contain required weekly-player columns')
-    const parsed=lines.slice(1).map(line=>line.split(',').map(x=>x.replace(/^"|"$/g,''))).map(r=>({
-      week:Number(r[col.week]),name:r[col.name]||'',position:r[col.pos]||'',team:col.team>=0?r[col.team]||'':'',opponent:col.opp>=0?r[col.opp]||'':'',seasonType:col.seasonType>=0?r[col.seasonType]||'':'',
-      targets:col.targets>=0?Number(r[col.targets]||0):0,carries:col.carries>=0?Number(r[col.carries]||0):0,receptions:col.receptions>=0?Number(r[col.receptions]||0):0,
-      fantasyPoints:Number(r[col.fantasy]||0),targetShare:col.targetShare>=0?Number(r[col.targetShare]||0):0,airYardsShare:col.airShare>=0?Number(r[col.airShare]||0):0,wopr:col.wopr>=0?Number(r[col.wopr]||0):0
-    })).filter(r=>Number.isFinite(r.week)&&r.name)
-    // Player-summary files can contain postseason rows. Keep REG rows when that column exists.
-    const regular=col.seasonType>=0?parsed.filter((r:any)=>!r.seasonType||r.seasonType==='REG'):parsed
-
-    let rows:any[]
-    if(dataSeason===season && targetWeek>1){
-      const minWeek=Math.max(1,targetWeek-history)
-      rows=regular.filter(r=>r.week>=minWeek&&r.week<targetWeek)
-    }else{
-      const weeks=[...new Set(regular.map(r=>r.week))].sort((a,b)=>b-a).slice(0,history)
-      const keep=new Set(weeks);rows=regular.filter(r=>keep.has(r.week))
-    }
-    const payload={source:'nflverse player weekly stats',sourceUrl,season,dataSeason,targetWeek,history,rows,fallback:dataSeason!==season}
+    const minWeek=Math.max(1,targetWeek-history)
+    const rows=lines.slice(1).map(line=>line.split(',')).filter(r=>{
+      const w=Number(r[col.week]);return w>=minWeek&&w<targetWeek
+    }).map(r=>({
+      week:Number(r[col.week]),name:r[col.name]||'',position:r[col.pos]||'',
+      team:r[col.team]||'',opponent:r[col.opp]||'',
+      targets:Number(r[col.targets]||0),carries:Number(r[col.carries]||0),
+      receptions:Number(r[col.receptions]||0),fantasyPoints:Number(r[col.fantasy]||0),
+      targetShare:Number(r[col.targetShare]||0),airYardsShare:Number(r[col.airShare]||0),
+      wopr:Number(r[col.wopr]||0)
+    }))
+    const defenseRanks=rankDefenseVsPosition(rows)
+    const payload={source:'nflverse player weekly stats',season,targetWeek,history,rows,defenseRanks}
     store(key,payload,30*60_000)
     return c.json(payload)
-  }catch(error){
+  } catch(error) {
     return c.json({error:'nflverse weekly stats failed',detail:error instanceof Error?error.message:String(error)},502)
   }
 })
+
 
 
 app.get('/diagnostic', (c) =>

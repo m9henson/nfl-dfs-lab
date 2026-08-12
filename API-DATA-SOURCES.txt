@@ -1,0 +1,12 @@
+NFL DFS Lab API-enhanced build
+
+Automatic feeds:
+- DraftKings slate/salary/IDs (unofficial adapter + official CSV fallback)
+- nflverse weekly history and usage
+- nflverse play-by-play red-zone, inside-10, inside-5 touches
+- derived defense-vs-position rankings
+- Sleeper injuries, depth-chart, trending adds
+- Open-Meteo weather
+- Win With Odds projection/value overlay
+
+DFS Score now adjusts for injury and severe weather. Vegas totals/spreads remain neutral/manual until a reliable free current source is selected.
