@@ -21,7 +21,19 @@ export type DfsPlayer = {
   routes?: number
   snaps?: number
   redZoneTouches?: number
+  insideTenTouches?: number
   insideFiveTouches?: number
+  redZoneTargets?: number
+  redZoneCarries?: number
+  depthChartOrder?: number
+  injuryStatus?: string
+  practiceParticipation?: string
+  trendingAdds?: number
+  weatherTempF?: number
+  weatherWindMph?: number
+  weatherGustMph?: number
+  weatherPrecipProb?: number
+  weatherScore?: number
   targetShare?: number
   airYardsShare?: number
   wopr?: number
@@ -30,13 +42,6 @@ export type DfsPlayer = {
   gameTotal?: number
   spread?: number
   defenseVsPositionRank?: number
-  defenseVsPositionPoints?: number
-  recentFantasyAvg?: number
-  historyFantasyAvg?: number
-  projectionScore?: number
-  recentFormScore?: number
-  wrCbMatchupScore?: number
-  playerRating?: number
 
   opportunityScore?: number
   matchupScore?: number

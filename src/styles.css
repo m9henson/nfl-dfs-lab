@@ -68,5 +68,3 @@ footer{color:#7189a4;font-size:10px;line-height:1.5;padding:12px 4px}
 .breakdown{grid-column:2/-1;display:flex;gap:5px;flex-wrap:wrap}.breakdown span,.metricStrip span{font-size:9px;color:#a8bfd7;background:#142a43;padding:4px 6px;border-radius:999px}
 .metricStrip{grid-column:1/-1;display:flex;gap:5px;flex-wrap:wrap}
 @media(max-width:760px){.scoreGrid{grid-template-columns:1fr}}
-
-.positionGroup{margin-top:18px}.positionGroup:first-of-type{margin-top:8px}.positionHeading{display:flex;align-items:center;gap:10px;margin:0 0 9px 2px}.positionHeading strong{font-size:1.05rem;color:var(--green,#59e38c);min-width:38px}
