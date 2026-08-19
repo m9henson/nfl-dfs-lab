@@ -1,6 +1,5 @@
 import React,{useMemo,useState} from 'react'
 import { NFL } from '../../src/sports'
-import { optimize } from '../../src/optimizer'
 import { exportDraftKingsLineups,importDraftKingsCsv } from '../../src/csv'
 import type { DfsPlayer,Lineup,Slate } from '../../src/types'
 import '../../src/styles.css'
@@ -30,13 +29,7 @@ function scorePlayer(p:DfsPlayer):DfsPlayer{
  const value=clamp(rawValue*18)
  const ceiling=clamp((p.ceiling||p.projection*1.25)*3)
  const leverage=clamp((p.ceiling||0)*2.2-(p.ownership||0)*1.5+20)
- let injuryAdj=0
- const inj=(p.injuryStatus||p.status||'').toLowerCase()
- if(inj.includes('out')||inj.includes('ir')) injuryAdj=-35
- else if(inj.includes('doubt')) injuryAdj=-20
- else if(inj.includes('question')) injuryAdj=-7
- const weatherAdj=((p.weatherScore??100)-100)*.12
- const dfs=clamp(opportunity*.27+matchup*.16+vegas*.14+value*.20+ceiling*.15+leverage*.08+weatherAdj+injuryAdj)
+ const dfs=clamp(opportunity*.27+matchup*.16+vegas*.14+value*.20+ceiling*.15+leverage*.08)
  return {...p,opportunityScore:opportunity,matchupScore:matchup,vegasScore:vegas,valueScore:value,ceilingScore:ceiling,leverageScore:leverage,dfsScore:dfs}
 }
 
@@ -51,7 +44,7 @@ export function Page(){
  const [week,setWeek]=useState(1)
  const [dataStatus,setDataStatus]=useState<string[]>([])
  const [tab,setTab]=useState<'dashboard'|'players'|'optimizer'|'lineups'>('dashboard')
- const [settings,setSettings]=useState({lineupCount:20,salaryCap:50000,minSpend:48000,maxExposure:.7,minUnique:2,randomness:.08,attempts:2500,requireStack:true,requireBringBack:false,maxTeamPlayers:4})
+ const [settings,setSettings]=useState({lineupCount:10,salaryCap:50000,minSpend:47000,maxExposure:.8,minUnique:1,randomness:.08,attempts:30000,requireStack:true,requireBringBack:false,maxTeamPlayers:4})
 
  const scored=useMemo(()=>players.map(scorePlayer).sort((a,b)=>(b.dfsScore||0)-(a.dfsScore||0)),[players])
  const top=useMemo(()=>scored.slice(0,12),[scored])
@@ -89,12 +82,10 @@ export function Page(){
    for(const row of d.rows||[]){
     const k=normalize(row.name);grouped.set(k,[...(grouped.get(k)||[]),row])
    }
-   const defenseRanks=d.defenseRanks||{}
    setPlayers(all=>all.map(p=>{
     const rows=grouped.get(normalize(p.name))||[]
-    const dvp=defenseRanks?.[p.position]?.[p.opponent||'']
-    if(!rows.length&&!dvp)return p
-    return scorePlayer({...p,defenseVsPositionRank:dvp?.rank??p.defenseVsPositionRank,
+    if(!rows.length)return p
+    return scorePlayer({...p,
       targets:avg(rows.map(x=>x.targets)),carries:avg(rows.map(x=>x.carries)),
       receptions:avg(rows.map(x=>x.receptions)),targetShare:avg(rows.map(x=>x.targetShare)),
       airYardsShare:avg(rows.map(x=>x.airYardsShare)),wopr:avg(rows.map(x=>x.wopr)),
@@ -116,35 +107,56 @@ export function Page(){
    setDataStatus(s=>[...s.filter(x=>!x.startsWith('Win With Odds')),'Win With Odds projections loaded'])
   }catch(e){setError(String(e))}finally{setLoading('')}
  }
- async function loadSleeper(){
-  if(!players.length)return setError('Load a DraftKings slate first.')
-  setLoading('sleeper');setError('')
-  try{const [a,b]=await Promise.all([fetch('/api/nfl/sleeper/players'),fetch('/api/nfl/sleeper/trending?hours=24&limit=100')]),pd=await a.json(),td=await b.json();if(!a.ok)throw Error(pd.detail||pd.error)
-   const by=new Map<string,any>();Object.values(pd.players||{}).forEach((x:any)=>{const n=`${x.first_name||''} ${x.last_name||''}`.trim();if(n)by.set(normalize(n),x)})
-   const tr=new Map<string,number>();for(const x of td.rows||[])tr.set(String(x.player_id),Number(x.count)||0)
-   setPlayers(all=>all.map(q=>{const x:any=by.get(normalize(q.name));return x?scorePlayer({...q,depthChartOrder:Number(x.depth_chart_order||x.depth_chart_position||0)||undefined,injuryStatus:x.injury_status||x.status||'',practiceParticipation:x.practice_participation||'',trendingAdds:tr.get(String(x.player_id))||0}):q}))
-   setDataStatus(z=>[...z.filter(x=>!x.startsWith('Sleeper')),'Sleeper injury/depth/trending loaded'])
-  }catch(e){setError(String(e))}finally{setLoading('')}
+
+ async function prepareWeekV2(){
+  if(!players.length)return setError('Load or import a DraftKings slate first.')
+  setLoading('prepare');setError('')
+  try{
+   const r=await fetch('/api/nfl/prepare-v2',{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify({season,week,players})
+   })
+   const d=await r.json()
+   if(!r.ok)throw Error(d.detail||d.error)
+   setPlayers((d.players||[]).map((x:any)=>scorePlayer(x)))
+   setDataStatus([
+    `Week ${week} prepared`,
+    `Historical baseline: ${d.sourceSeason}`,
+    ...(d.warnings||[])
+   ])
+  }catch(e){setError(e instanceof Error?e.message:String(e))}
+  finally{setLoading('')}
  }
- async function loadRedZone(){
-  if(!players.length)return setError('Load a DraftKings slate first.')
-  setLoading('redzone');setError('')
-  try{const r=await fetch(`/api/nfl/redzone?season=${season}&week=${week}&history=5`),d=await r.json();if(!r.ok)throw Error(d.detail||d.error);const m=new Map((d.players||[]).map((x:any)=>[normalize(x.name),x]))
-   setPlayers(all=>all.map(q=>{const x:any=m.get(normalize(q.name));return x?scorePlayer({...q,redZoneTouches:x.redZoneTouches,insideTenTouches:x.insideTenTouches,insideFiveTouches:x.insideFiveTouches,redZoneTargets:x.redZoneTargets,redZoneCarries:x.redZoneCarries}):q}))
-   setDataStatus(z=>[...z.filter(x=>!x.startsWith('Red-zone')),`Red-zone/goal-line usage loaded${d.fallbackUsed ? ` (using ${d.sourceSeason} baseline)` : ''}`])
-  }catch(e){setError(String(e))}finally{setLoading('')}
- }
- async function loadWeather(){
-  if(!players.length)return setError('Load a DraftKings slate first.')
-  setLoading('weather');setError('')
-  try{const homes=new Set<string>();players.forEach(q=>{const m=(q.game||'').match(/([A-Z]{2,3})@([A-Z]{2,3})/);if(m)homes.add(m[2])});const wx=new Map<string,any>()
-   await Promise.all([...homes].map(async h=>{const r=await fetch(`/api/nfl/weather?homeTeam=${h}`),d=await r.json();if(r.ok)wx.set(h,d)}))
-   setPlayers(all=>all.map(q=>{const m=(q.game||'').match(/([A-Z]{2,3})@([A-Z]{2,3})/),d:any=m?wx.get(m[2]):undefined;return d?scorePlayer({...q,weatherTempF:d.weather?.tempF,weatherWindMph:d.weather?.windMph,weatherGustMph:d.weather?.gustMph,weatherPrecipProb:d.weather?.precipProb,weatherScore:d.weather?.score??100}):q}))
-   setDataStatus(z=>[...z.filter(x=>!x.startsWith('Weather')),'Weather loaded'])
-  }catch(e){setError(String(e))}finally{setLoading('')}
- }
+
  function patch(name:string,x:Partial<DfsPlayer>){setPlayers(all=>all.map(p=>p.name===name?scorePlayer({...p,...x}):p))}
- function run(){const generated=optimize(scored,settings);setLineups(generated);setTab('lineups');if(!generated.length)setError('No lineups found. Lower minimum spend or loosen constraints.')}
+ async function run(){
+  if(!players.length)return setError('Load a DraftKings slate first.')
+  setLoading('optimizer');setError('')
+  try{
+   const r=await fetch('/api/nfl/optimize-v2',{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify({
+     players:scored,
+     lineupCount:settings.lineupCount,
+     salaryCap:settings.salaryCap,
+     minSpend:settings.minSpend,
+     maxExposure:settings.maxExposure,
+     minUnique:settings.minUnique,
+     requireStack:settings.requireStack,
+     requireBringBack:settings.requireBringBack
+    })
+   })
+   const d=await r.json()
+   if(!r.ok)throw Error(d.detail||d.error)
+   setLineups(d.lineups||[])
+   setTab('lineups')
+   setDataStatus(z=>[...z.filter(x=>!x.startsWith('Optimizer')),`Optimizer: ${(d.lineups||[]).length} lineups in ${d.elapsedMs} ms`])
+   if(!(d.lineups||[]).length)setError('No valid lineups. Try $48,000 minimum spend, 80% exposure, and 1 unique player.')
+  }catch(e){setError(e instanceof Error?e.message:String(e))}
+  finally{setLoading('')}
+ }
  function exportCsv(){download(`nfl-dk-lineups-week-${week}.csv`,exportDraftKingsLineups(lineups))}
 
  return <main className="shell">
@@ -173,12 +185,9 @@ export function Page(){
     </div>
     <div className="card">
      <div className="cardTitle"><div><span className="step">2</span><strong>NFL data sources</strong></div></div>
+     <button className="primary wide" onClick={prepareWeekV2}>{loading==='prepare'?'Preparing…':'Prepare Week — reliable'}</button>
      <button className="secondary wide" onClick={loadNFLVerse}>{loading==='nflverse'?'Loading…':'Load nflverse usage + history'}</button>
-     <button className="primary wide" onClick={prepareWeek}>{loading==='prepare'?'Preparing week…':'Prepare Week — automatic'}</button>
-              <button className="secondary wide" onClick={loadWWO}>{loading==='wwo'?'Loading…':'Load Win With Odds projections'}</button>
-     <button className="secondary wide" onClick={loadSleeper}>{loading==='sleeper'?'Loading…':'Load Sleeper injuries + depth'}</button>
-     <button className="secondary wide" onClick={loadRedZone}>{loading==='redzone'?'Loading…':'Load red-zone + goal-line usage'}</button>
-     <button className="secondary wide" onClick={loadWeather}>{loading==='weather'?'Loading…':'Load game weather'}</button>
+     <button className="secondary wide" onClick={loadWWO}>{loading==='wwo'?'Loading…':'Load Win With Odds projections'}</button>
      <div className="sourceList">{dataStatus.length?dataStatus.map(x=><div className="sourceStatus" key={x}>✓ {x}</div>):<div className="empty">No data loaded yet.</div>}</div>
     </div>
    </section>
@@ -198,7 +207,7 @@ export function Page(){
     <label className="mini">Projection<input type="number" step=".1" value={p.projection} onChange={e=>patch(p.name,{projection:+e.target.value})}/></label>
     <label className="mini">Ownership %<input type="number" step=".1" value={p.ownership} onChange={e=>patch(p.name,{ownership:+e.target.value})}/></label>
     <div className="playerActions"><button className={p.locked?'smallBtn locked':'smallBtn'} onClick={()=>patch(p.name,{locked:!p.locked,excluded:false})}>{p.locked?'Locked':'Lock'}</button><button className={p.excluded?'smallBtn excluded':'smallBtn'} onClick={()=>patch(p.name,{excluded:!p.excluded,locked:false})}>{p.excluded?'Excluded':'Exclude'}</button></div>
-    <div className="metricStrip"><span>Targets {p.targets?.toFixed(1)||'—'}</span><span>Carries {p.carries?.toFixed(1)||'—'}</span><span>Tgt share {p.targetShare?`${(p.targetShare*100).toFixed(0)}%`:'—'}</span><span>RZ {p.redZoneTouches??'—'}</span><span>Inside 5 {p.insideFiveTouches??'—'}</span><span>DvP {p.defenseVsPositionRank?`#${p.defenseVsPositionRank}`:'—'}</span><span>Wind {p.weatherWindMph!==undefined?`${p.weatherWindMph.toFixed(0)} mph`:'—'}</span><span>{p.injuryStatus||'Healthy'}</span><span>Value {p.valueScore?.toFixed(0)}</span></div>
+    <div className="metricStrip"><span>Targets {p.targets?.toFixed(1)||'—'}</span><span>Carries {p.carries?.toFixed(1)||'—'}</span><span>Tgt share {p.targetShare?`${(p.targetShare*100).toFixed(0)}%`:'—'}</span><span>Value {p.valueScore?.toFixed(0)}</span></div>
    </article>)}</div>
   </section>}
 
