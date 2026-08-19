@@ -415,6 +415,78 @@ app.get('/client-check', (c) =>
   </html>`)
 )
 
+
+type OptP={id:string;name:string;position:string;eligiblePositions?:string[];salary:number;team:string;opponent?:string;projection:number;ceiling?:number;dfsScore?:number;locked?:boolean;excluded?:boolean}
+const OPT_SLOTS=['QB','RB','RB','WR','WR','WR','TE','FLEX','DST']
+const optEligible=(p:OptP,s:string)=>s==='FLEX'?['RB','WR','TE'].includes(p.position):s==='DST'?['DST','DEF'].includes(p.position):p.position===s
+const optRating=(p:OptP)=>Number(p.projection||0)+Number(p.dfsScore||0)*.05+Number(p.ceiling||0)*.03
+
+function solveFast(pool:OptP[],count:number,cap:number,minSpend:number,minUnique:number,maxExposure:number,stack:boolean,bringBack:boolean){
+ const active=pool.filter(p=>!p.excluded&&p.salary>0&&p.projection>0), exposure=new Map<string,number>(), results:any[]=[], previous:Set<string>[]=[]
+ const maxCount=Math.max(1,Math.ceil(count*maxExposure)), deadline=Date.now()+7000
+ const by=new Map<string,OptP[]>()
+ for(const slot of [...new Set(OPT_SLOTS)]) by.set(slot,active.filter(p=>optEligible(p,slot)).sort((a,b)=>optRating(b)-optRating(a)).slice(0,slot==='FLEX'?32:24))
+ for(let n=0;n<count&&Date.now()<deadline;n++){
+  let best:any=null
+  const chosen:any[]=[],used=new Set<string>(),teams=new Map<string,number>()
+  const order=OPT_SLOTS.map(slot=>({slot})).sort((a,b)=>(by.get(a.slot)?.length||0)-(by.get(b.slot)?.length||0))
+  function dfs(d:number,sal:number,score:number){
+   if(Date.now()>=deadline||sal>cap)return
+   if(d===order.length){
+    if(sal<minSpend)return
+    if(active.filter(p=>p.locked).some(p=>!used.has(p.id)))return
+    const ids=new Set(chosen.map(p=>p.id))
+    for(const old of previous){let overlap=0;ids.forEach(id=>{if(old.has(id))overlap++});if(9-overlap<minUnique)return}
+    if(chosen.some(p=>(exposure.get(p.id)||0)>=maxCount))return
+    const qb=chosen.find(p=>p.assignedSlot==='QB')
+    if(qb&&stack&&!chosen.some(p=>p.id!==qb.id&&p.team===qb.team&&['WR','TE'].includes(p.position)))return
+    if(qb&&bringBack&&qb.opponent&&!chosen.some(p=>p.team===qb.opponent&&['RB','WR','TE'].includes(p.position)))return
+    if(!best||score>best.score)best={players:[...chosen],salary:sal,projection:chosen.reduce((x,p)=>x+Number(p.projection||0),0),score}
+    return
+   }
+   const slot=order[d].slot
+   const candidates=[...(by.get(slot)||[])].sort((a,b)=>(optRating(b)-(exposure.get(b.id)||0)*1.5)-(optRating(a)-(exposure.get(a.id)||0)*1.5))
+   for(const p of candidates){
+    if(used.has(p.id)||(exposure.get(p.id)||0)>=maxCount)continue
+    const tc=teams.get(p.team)||0;if(tc>=4)continue
+    chosen.push({...p,assignedSlot:slot});used.add(p.id);teams.set(p.team,tc+1)
+    dfs(d+1,sal+p.salary,score+optRating(p)-(exposure.get(p.id)||0)*1.5)
+    chosen.pop();used.delete(p.id);if(tc)teams.set(p.team,tc);else teams.delete(p.team)
+   }
+  }
+  dfs(0,0,0);if(!best)break
+  results.push(best);previous.push(new Set(best.players.map((p:any)=>p.id)));best.players.forEach((p:any)=>exposure.set(p.id,(exposure.get(p.id)||0)+1))
+ }
+ return results
+}
+
+app.post('/api/nfl/optimize',async c=>{
+ const started=Date.now()
+ try{const b=await c.req.json() as any, players=Array.isArray(b.players)?b.players:[]
+  if(!players.length)return c.json({error:'No player pool supplied'},400)
+  const lineups=solveFast(players,Math.min(50,Math.max(1,Number(b.lineupCount||20))),Number(b.salaryCap||50000),Number(b.minSpend||48500),Math.max(1,Number(b.minUnique||2)),Math.max(.1,Math.min(1,Number(b.maxExposure||.7))),b.requireStack!==false,Boolean(b.requireBringBack))
+  return c.json({lineups,elapsedMs:Date.now()-started})
+ }catch(e){return c.json({error:'Optimizer failed',detail:e instanceof Error?e.message:String(e)},500)}
+})
+
+app.post('/api/nfl/prepare-week',async c=>{
+ const b=await c.req.json().catch(()=>({})) as any, season=Number(b.season||new Date().getFullYear()),week=Number(b.week||1),players=Array.isArray(b.players)?b.players:[]
+ if(!players.length)return c.json({error:'Load or import a DraftKings slate first.'},400)
+ const warnings:string[]=[],status:any={draftKings:true,nflverse:false,sleeper:false};let rows:any[]=[],sl:any={}
+ try{
+  let sourceSeason=week<=1?season-1:season
+  let r=await fetch(`https://github.com/nflverse/nflverse-data/releases/download/player_stats/stats_player_week_${sourceSeason}.csv`,{headers:{'user-agent':'NFLDFSLab/2.0'}})
+  if(!r.ok&&sourceSeason===season){sourceSeason=season-1;r=await fetch(`https://github.com/nflverse/nflverse-data/releases/download/player_stats/stats_player_week_${sourceSeason}.csv`)}
+  if(r.ok){rows=parseCsv(await r.text(),{columns:true,skip_empty_lines:true,relax_column_count:true}) as any[];const target=sourceSeason===season?week:19,min=Math.max(1,target-5);rows=rows.filter(x=>Number(x.week)>=min&&Number(x.week)<target);status.nflverse=true;status.nflverseSeason=sourceSeason}else warnings.push('nflverse unavailable')
+ }catch(e){warnings.push('nflverse unavailable')}
+ try{sl=await fetchJson('https://api.sleeper.app/v1/players/nfl?active=true');status.sleeper=true}catch(e){warnings.push('Sleeper unavailable')}
+ const hist=new Map<string,any[]>();for(const x of rows){const k=normalizeName(String(x.player_display_name||x.player_name||''));if(k){const a=hist.get(k)||[];a.push(x);hist.set(k,a)}}
+ const sm=new Map<string,any>();Object.values(sl||{}).forEach((x:any)=>{const k=normalizeName(`${x.first_name||''} ${x.last_name||''}`);if(k)sm.set(k,x)})
+ const merged=players.map((p:any)=>{const h=hist.get(normalizeName(p.name))||[],x=sm.get(normalizeName(p.name)),avg=(f:string)=>h.length?h.reduce((n,z)=>n+(Number(z[f])||0),0)/h.length:0
+  return {...p,projection:Number(p.projection||p.fppg||0)||avg('fantasy_points_ppr'),targets:avg('targets'),carries:avg('carries'),receptions:avg('receptions'),targetShare:avg('target_share'),airYardsShare:avg('air_yards_share'),wopr:avg('wopr'),injuryStatus:x?.injury_status||x?.status||'',practiceParticipation:x?.practice_participation||'',depthChartOrder:Number(x?.depth_chart_order||0)||undefined,dataGames:h.length}})
+ return c.json({season,week,players:merged,sourceStatus:status,warnings,preparedAt:new Date().toISOString()})
+})
+
 // Vike catch-all must be last.
 vike(app)
 
