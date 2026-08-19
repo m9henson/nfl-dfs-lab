@@ -174,7 +174,8 @@ export function Page(){
     <div className="card">
      <div className="cardTitle"><div><span className="step">2</span><strong>NFL data sources</strong></div></div>
      <button className="secondary wide" onClick={loadNFLVerse}>{loading==='nflverse'?'Loading…':'Load nflverse usage + history'}</button>
-     <button className="secondary wide" onClick={loadWWO}>{loading==='wwo'?'Loading…':'Load Win With Odds projections'}</button>
+     <button className="primary wide" onClick={prepareWeek}>{loading==='prepare'?'Preparing week…':'Prepare Week — automatic'}</button>
+              <button className="secondary wide" onClick={loadWWO}>{loading==='wwo'?'Loading…':'Load Win With Odds projections'}</button>
      <button className="secondary wide" onClick={loadSleeper}>{loading==='sleeper'?'Loading…':'Load Sleeper injuries + depth'}</button>
      <button className="secondary wide" onClick={loadRedZone}>{loading==='redzone'?'Loading…':'Load red-zone + goal-line usage'}</button>
      <button className="secondary wide" onClick={loadWeather}>{loading==='weather'?'Loading…':'Load game weather'}</button>
