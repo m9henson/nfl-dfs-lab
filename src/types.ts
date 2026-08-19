@@ -21,19 +21,7 @@ export type DfsPlayer = {
   routes?: number
   snaps?: number
   redZoneTouches?: number
-  insideTenTouches?: number
   insideFiveTouches?: number
-  redZoneTargets?: number
-  redZoneCarries?: number
-  depthChartOrder?: number
-  injuryStatus?: string
-  practiceParticipation?: string
-  trendingAdds?: number
-  weatherTempF?: number
-  weatherWindMph?: number
-  weatherGustMph?: number
-  weatherPrecipProb?: number
-  weatherScore?: number
   targetShare?: number
   airYardsShare?: number
   wopr?: number
