@@ -1,0 +1,8 @@
+V2 corrected:
+- Based on the last working rendered build.
+- No new runtime dependencies added.
+- React no longer calls the local optimizer.
+- /api/nfl/prepare-v2 prepares the week on Render.
+- /api/nfl/optimize-v2 generates lineups on Render.
+- Defaults relaxed to 10 lineups, $47k min spend, 80% exposure, 1 unique.
+- Optional data failures return warnings rather than breaking the slate.
